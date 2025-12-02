@@ -89,7 +89,7 @@ wget https://raw.githubusercontent.com/tangyoha/telegram_media_downloader/blob/m
 vi config.yaml
 
 # 第一次需要前台启动
-# 输入你的电话号码和密码，然后退出(ctrl + c)
+# 输入你的电话号码(前面要加86)和APP接收到的验证码，然后退出(ctrl + c)
 docker-compose run --rm telegram_media_downloader
 
 # 执行完以上操作后，后面的所有启动都在后台启动

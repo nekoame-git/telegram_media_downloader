@@ -1,15 +1,20 @@
-#https://github.com/tangyoha/pyrogram/archive/refs/tags/v2.0.69.zip
 https://github.com/tangyoha/pyrogram/archive/refs/heads/patch.zip
-#https://github.com/tangyoha/pyrogram/archive/refs/heads/master_v2.0.69_1.zip
-PyYAML==5.3.1
-rich==12.5.1
-PyTgCrypto==1.2.6
-loguru==0.6.0
+# 使用最新的 PyYAML 稳定版本 (6.0.3) 或兼容版本
+PyYAML>=6.0.1
+# 使用最新的 rich 版本
+rich>=13.0.0
+# 解决 PyTgCrypto 依赖错误
+PyTgCrypto>=1.2.11 
 # aligo==5.4.0
-Werkzeug==2.2.2
-flask==2.2.2
-ply==3.11
-ruamel.yaml==0.17.21
-flask-login==0.6.2
-pycryptodome==3.18.0
-requests==2.32.3
+# 使用 Flask 3.x 及其依赖的 Werkzeug 3.x
+Werkzeug>=3.0.0
+flask>=3.0.0
+ply>=3.11
+# 使用 ruamel.yaml 最新版本
+ruamel.yaml>=0.18.0
+# 使用 flask-login 最新版本
+flask-login>=0.6.3
+# 使用 pycryptodome 最新版本
+pycryptodome>=3.20.0
+# 使用 requests 最新版本
+requests>=2.32.5
