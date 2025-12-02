@@ -13,7 +13,8 @@ from rich.logging import RichHandler
 
 from module.app import Application, ChatDownloadConfig, DownloadStatus, TaskNode
 from module.bot import start_download_bot, stop_download_bot
-from module.download_stat import update_download_status
+# 修改引入
+from module.download_stat import update_download_status, update_download_stat
 from module.get_chat_history_v2 import get_chat_history_v2
 from module.language import _t
 from module.pyrogram_extension import (
@@ -55,18 +56,7 @@ logging.getLogger("pyrogram").setLevel(logging.WARNING)
 
 
 def _check_download_finish(media_size: int, download_path: str, ui_file_name: str):
-    """Check download task if finish
-
-    Parameters
-    ----------
-    media_size: int
-        The size of the downloaded resource
-    download_path: str
-        Resource download hold path
-    ui_file_name: str
-        Really show file name
-
-    """
+    """Check download task if finish"""
     download_size = os.path.getsize(download_path)
     if media_size == download_size:
         logger.success(f"{_t('Successfully downloaded')} - {ui_file_name}")
@@ -81,60 +71,21 @@ def _check_download_finish(media_size: int, download_path: str, ui_file_name: st
 
 
 def _move_to_download_path(temp_download_path: str, download_path: str):
-    """Move file to download path
-
-    Parameters
-    ----------
-    temp_download_path: str
-        Temporary download path
-
-    download_path: str
-        Download path
-
-    """
-
+    """Move file to download path"""
     directory, _ = os.path.split(download_path)
     os.makedirs(directory, exist_ok=True)
     shutil.move(temp_download_path, download_path)
 
 
 def _check_timeout(retry: int, _: int):
-    """Check if message download timeout, then add message id into failed_ids
-
-    Parameters
-    ----------
-    retry: int
-        Retry download message times
-
-    message_id: int
-        Try to download message 's id
-
-    """
+    """Check if message download timeout"""
     if retry == 2:
         return True
     return False
 
 
 def _can_download(_type: str, file_formats: dict, file_format: Optional[str]) -> bool:
-    """
-    Check if the given file format can be downloaded.
-
-    Parameters
-    ----------
-    _type: str
-        Type of media object.
-    file_formats: dict
-        Dictionary containing the list of file_formats
-        to be downloaded for `audio`, `document` & `video`
-        media types
-    file_format: str
-        Format of the current file to be downloaded.
-
-    Returns
-    -------
-    bool
-        True if the file format can be downloaded else False.
-    """
+    """Check if the given file format can be downloaded."""
     if _type in ["audio", "document", "video"]:
         allowed_formats: list = file_formats[_type]
         if not file_format in allowed_formats and allowed_formats[0] != "all":
@@ -143,19 +94,7 @@ def _can_download(_type: str, file_formats: dict, file_format: Optional[str]) ->
 
 
 def _is_exist(file_path: str) -> bool:
-    """
-    Check if a file exists and it is not a directory.
-
-    Parameters
-    ----------
-    file_path: str
-        Absolute path of the file to be checked.
-
-    Returns
-    -------
-    bool
-        True if the file exists else False.
-    """
+    """Check if a file exists and it is not a directory."""
     return not os.path.isdir(file_path) and os.path.exists(file_path)
 
 
@@ -168,20 +107,7 @@ async def _get_media_meta(
     media_obj: Union[Audio, Document, Photo, Video, VideoNote, Voice],
     _type: str,
 ) -> Tuple[str, str, Optional[str]]:
-    """Extract file name and file id from media object.
-
-    Parameters
-    ----------
-    media_obj: Union[Audio, Document, Photo, Video, VideoNote, Voice]
-        Media object to be extracted.
-    _type: str
-        Type of media object.
-
-    Returns
-    -------
-    Tuple[str, str, Optional[str]]
-        file_name, file_format
-    """
+    """Extract file name and file id from media object."""
     if _type in ["audio", "document", "video"]:
         # pylint: disable = C0301
         file_format: Optional[str] = media_obj.mime_type.split("/")[-1]  # type: ignore
@@ -262,6 +188,31 @@ async def add_download_task(
     """Add Download task"""
     if message.empty:
         return False
+
+    # [新增] 记录任务入队，包括接收时间和来源频道
+    chat_title = "Unknown"
+    if message.chat and message.chat.title:
+        chat_title = message.chat.title
+    elif node.chat_id:
+        chat_title = str(node.chat_id)
+
+    # 尝试获取文件大小
+    _file_size = 0
+    for kind in ["document", "video", "audio", "photo", "voice", "video_note"]:
+        media = getattr(message, kind, None)
+        if media:
+            _file_size = getattr(media, "file_size", 0)
+            break
+
+    update_download_stat(
+        node.chat_id,
+        message.id,
+        status="Queued",
+        receive_time=time.time(),
+        chat_title=chat_title,
+        total_size=_file_size
+    )
+
     node.download_status[message.id] = DownloadStatus.Downloading
     await queue.put((message, node))
     node.total_task += 1
@@ -356,37 +307,7 @@ async def download_media(
     file_formats: dict,
     node: TaskNode,
 ):
-    """
-    Download media from Telegram.
-
-    Each of the files to download are retried 3 times with a
-    delay of 5 seconds each.
-
-    Parameters
-    ----------
-    client: pyrogram.client.Client
-        Client to interact with Telegram APIs.
-    message: pyrogram.types.Message
-        Message object retrieved from telegram.
-    media_types: list
-        List of strings of media types to be downloaded.
-        Ex : `["audio", "photo"]`
-        Supported formats:
-            * audio
-            * document
-            * photo
-            * video
-            * voice
-    file_formats: dict
-        Dictionary containing the list of file_formats
-        to be downloaded for `audio`, `document` & `video`
-        media types.
-
-    Returns
-    -------
-    int
-        Current message id.
-    """
+    """Download media from Telegram."""
 
     # pylint: disable = R0912
 
@@ -418,11 +339,22 @@ async def download_media(
                             f"id={message.id} {ui_file_name} "
                             f"{_t('already download,download skipped')}.\n"
                         )
-
+                        # [新增] 记录跳过状态
+                        update_download_stat(node.chat_id, message.id, status="Skipped (Exists)", file_path=file_name)
                         return DownloadStatus.SkipDownload, None
             else:
                 return DownloadStatus.SkipDownload, None
 
+            # [新增] 开始下载前记录
+            update_download_stat(
+                node.chat_id,
+                message.id,
+                status="Downloading",
+                start_time=time.time(),
+                file_path=file_name,
+                file_name=ui_file_name,
+                total_size=media_size
+            )
             break
     except Exception as e:
         logger.error(
@@ -430,6 +362,8 @@ async def download_media(
             f"{_t('could not be downloaded due to following exception')}:\n[{e}].",
             exc_info=True,
         )
+        # [新增] 记录错误
+        update_download_stat(node.chat_id, message.id, status="Failed")
         return DownloadStatus.FailedDownload, None
     if _media is None:
         return DownloadStatus.SkipDownload, None
@@ -455,7 +389,17 @@ async def download_media(
                 _check_download_finish(media_size, temp_download_path, ui_file_name)
                 await asyncio.sleep(0.5)
                 _move_to_download_path(temp_download_path, file_name)
-                # TODO: if not exist file size or media
+
+                # [新增] 记录成功和完成时间
+                update_download_stat(
+                    node.chat_id,
+                    message.id,
+                    status="Success",
+                    finish_time=time.time(),
+                    down_byte=media_size, # 确保进度100%
+                    file_path=file_name
+                )
+
                 return DownloadStatus.SuccessDownload, file_name
         except pyrogram.errors.exceptions.bad_request_400.BadRequest:
             logger.warning(
@@ -464,7 +408,6 @@ async def download_media(
             await asyncio.sleep(RETRY_TIME_OUT)
             message = await fetch_message(client, message)
             if _check_timeout(retry, message.id):
-                # pylint: disable = C0301
                 logger.error(
                     f"Message[{message.id}]: "
                     f"{_t('file reference expired for 3 retries, download skipped.')}"
@@ -474,7 +417,6 @@ async def download_media(
             logger.warning("Message[{}]: FlowWait {}", message.id, wait_err.value)
             _check_timeout(retry, message.id)
         except TypeError:
-            # pylint: disable = C0301
             logger.warning(
                 f"{_t('Timeout Error occurred when downloading Message')}[{message.id}], "
                 f"{_t('retrying after')} {RETRY_TIME_OUT} {_t('seconds')}"
@@ -485,7 +427,6 @@ async def download_media(
                     f"Message[{message.id}]: {_t('Timing out after 3 reties, download skipped.')}"
                 )
         except Exception as e:
-            # pylint: disable = C0301
             logger.error(
                 f"Message[{message.id}]: "
                 f"{_t('could not be downloaded due to following exception')}:\n[{e}].",
@@ -493,6 +434,8 @@ async def download_media(
             )
             break
 
+    # [新增] 如果循环结束还没返回成功，则是失败
+    update_download_stat(node.chat_id, message.id, status="Failed")
     return DownloadStatus.FailedDownload, None
 
 

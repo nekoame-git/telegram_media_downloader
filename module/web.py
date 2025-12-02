@@ -3,6 +3,7 @@
 import logging
 import os
 import threading
+from datetime import datetime
 
 from flask import Flask, jsonify, render_template, request
 from flask_login import LoginManager, UserMixin, login_required, login_user
@@ -98,16 +99,6 @@ def init_web(app: Application):
 def login():
     """
     Function to handle the login route.
-
-    Parameters:
-    - No parameters
-
-    Returns:
-    - If the request method is "POST" and the username and
-      password match the ones in the web_login_users dictionary,
-      it returns a JSON response with a code of "1".
-    - Otherwise, it returns a JSON response with a code of "0".
-    - If the request method is not "POST", it returns the rendered "login.html" template.
     """
     if request.method == "POST":
         username = "root"
@@ -177,46 +168,56 @@ def get_app_version():
     return utils.__version__
 
 
+def format_ts(ts):
+    """格式化时间戳"""
+    if not ts:
+        return "-"
+    return datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
+
+
 @_flask_app.route("/get_download_list")
 @login_required
 def get_download_list():
-    """get download list"""
-    if request.args.get("already_down") is None:
-        return "[]"
+    """get download list with full history"""
+    # 获取新版历史记录 (字典格式)
+    raw_data = get_download_result()
 
-    already_down = request.args.get("already_down") == "true"
+    json_list = []
+    # 遍历所有记录
+    for key, item in raw_data.items():
+        # 深拷贝以避免修改原数据
+        value = item.copy()
 
-    download_result = get_download_result()
-    result = "["
-    for chat_id, messages in download_result.items():
-        for idx, value in messages.items():
-            is_already_down = value["down_byte"] == value["total_size"]
+        # 实时检测文件状态
+        status = value.get('status', 'Unknown')
+        file_path = value.get('file_path', '')
 
-            if already_down and not is_already_down:
-                continue
+        if status == 'Success' and file_path:
+            if not os.path.exists(file_path):
+                status = 'File Missing'
 
-            if result != "[":
-                result += ","
-            download_speed = format_byte(value["download_speed"]) + "/s"
-            result += (
-                '{ "chat":"'
-                + f"{chat_id}"
-                + '", "id":"'
-                + f"{idx}"
-                + '", "filename":"'
-                + os.path.basename(value["file_name"])
-                + '", "total_size":"'
-                + f'{format_byte(value["total_size"])}'
-                + '" ,"download_progress":"'
-            )
-            result += (
-                f'{round(value["down_byte"] / value["total_size"] * 100, 1)}'
-                + '" ,"download_speed":"'
-                + download_speed
-                + '" ,"save_path":"'
-                + value["file_name"].replace("\\", "/")
-                + '"}'
-            )
+        # 计算进度
+        progress = 0.0
+        if value.get('total_size', 0) > 0:
+            progress = (value.get('down_byte', 0) / value.get('total_size')) * 100
+        elif status == 'Success':
+            progress = 100.0
 
-    result += "]"
-    return result
+        json_list.append({
+            "chat": value.get('chat_title', str(value.get('chat_id'))),
+            "id": str(value.get('message_id')),
+            "filename": os.path.basename(value.get('file_name')) if value.get('file_name') else "Unknown",
+            "total_size": format_byte(value.get('total_size', 0)),
+            "download_progress": f"{progress:.1f}",
+            "download_speed": f"{format_byte(value.get('download_speed', 0))}/s",
+            "save_path": file_path,
+            "status": status,
+            "receive_time": format_ts(value.get('receive_time')),
+            "start_time": format_ts(value.get('start_time')),
+            "finish_time": format_ts(value.get('finish_time'))
+        })
+
+    # 按接收时间倒序排列 (最新的在前)
+    json_list.sort(key=lambda x: x['receive_time'], reverse=True)
+
+    return jsonify(json_list)
